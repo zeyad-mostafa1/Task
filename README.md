@@ -77,21 +77,20 @@ Make sure the following are installed:
 ### Add Student
 Admin can create new student records.
 
-![Add Student](Add-student.PNG)
-
+![Add Student](images/Add.PNG)
 ---
 
 ### View Students
 See all records in a table.
 
-![View Students](Student-list.PNG)
+![Student List](images/List.PNG)
 
 ---
 
 ### Search Student
 Search by name (case-insensitive, partial match).
 
-![Search Student](Search-student.PNG)
+![Search Student](images/Search.PNG)
 
 ---
 
