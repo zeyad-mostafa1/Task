@@ -123,7 +123,7 @@ def students():
     conn = sqlite3.connect('students.db')
     c = conn.cursor()
     c.execute('SELECT id, name, grade, course FROM students')
-    students = c.fetchall()  # Return as list of tuples
+    students = c.fetchall()  
     conn.close()
     return render_template('students.html', students=students)
 
