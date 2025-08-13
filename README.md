@@ -1,9 +1,6 @@
 # Student Database Management System
 
-A simple **web-based Student Database Management System** built with **Flask (Python)** and integrated with **C++** for high-performance searching.  
-It supports adding, viewing, updating, deleting, and searching student records stored in an **SQLite** database.  
-The highlight of this project is its search functionality, implemented in **C++** and compiled into a shared library for optimal speed.
-
+This project is a **web-based student database management system** built with **Flask (Python)** and integrated with **C++** for efficient searching. It allows users to add, view, update, delete, and search student records in an **SQLite** database. The focus is on the search functionality, which uses a C++ shared library (studentlib.so) returning a **pointer** (char*) for performance.
 ---
 
 ## Features
@@ -135,11 +132,11 @@ The search functionality showcases **hybrid programming** by combining Python's 
 
 ---
 
-## Why Use C++ for Search?
+## Why C++ with Pointer?
 
-- Significantly faster than pure Python for large datasets.
-- Allows performance-critical logic to run in native code.
-- Keeps main application logic in Python for flexibility.
+- C++ is faster for database queries on large datasets.
+- Returning a pointer simplifies Python code (no buffer size needed) and allows dynamic memory allocation.
+- Memory is freed explicitly to prevent leaks.
 
 ---
 
