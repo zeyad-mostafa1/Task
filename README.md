@@ -1,6 +1,7 @@
 # Student Database Management System
 
 This project is a **web-based student database management system** built with **Flask (Python)** and integrated with **C++** for efficient searching. It allows users to add, view, update, delete, and search student records in an **SQLite** database. The focus is on the search functionality, which uses a C++ shared library (studentlib.so) returning a **pointer** (char*) for performance.
+
 ---
 
 ## Features

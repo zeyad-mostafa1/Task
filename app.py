@@ -1,22 +1,23 @@
-import sqlite3
 import ctypes
-import logging
-from flask import Flask, render_template, request, redirect, url_for, session, send_file
+import sqlite3
+from flask import Flask, render_template, request, redirect, url_for, session, send_file, flash
 from werkzeug.security import generate_password_hash, check_password_hash
+from functools import wraps
 import csv
 import io
+import logging
 
 app = Flask(__name__)
-app.secret_key = 'supersecretkey'  # Replace with a secure key in production
+app.secret_key = 'supersecretkey'
+logging.basicConfig(filename='app.log', level=logging.INFO, 
+                    format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Load C++ shared library
 lib = ctypes.CDLL('./studentlib.so')
-lib.search_students.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_int]
-lib.search_students.restype = ctypes.c_int
-
-# Configure logging
-logging.basicConfig(filename='app.log', level=logging.INFO, 
-                    format='%(asctime)s - %(levelname)s - %(message)s')
+lib.search_students.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
+lib.search_students.restype = ctypes.c_char_p
+lib.free_result.argtypes = [ctypes.c_char_p]
+lib.free_result.restype = None
 
 # Initialize database
 def init_db():
@@ -32,7 +33,7 @@ def init_db():
     conn.commit()
     conn.close()
 
-# Parse C++ output into list of dictionaries
+# Parse search results
 def parse_search_results(raw_output):
     results = []
     current_student = {}
@@ -56,29 +57,29 @@ def parse_search_results(raw_output):
 
 # Search function
 def search_students(db_path, search_name):
-    buffer_size = 1024
-    buffer = ctypes.create_string_buffer(buffer_size)
     db_path_c = db_path.encode('utf-8')
     search_name_c = search_name.encode('utf-8')
     logging.info(f"Searching for: {search_name}")
-    result = lib.search_students(db_path_c, search_name_c, buffer, buffer_size)
-    raw_output = buffer.value.decode('utf-8')
-    logging.info(f"C++ search result: {raw_output}")
-    if result == 0:
-        parsed_results = parse_search_results(raw_output)
-        logging.info(f"Parsed results: {parsed_results}")
-        return parsed_results
-    else:
-        logging.error(f"Search failed: {raw_output}")
+    result_pointer = lib.search_students(db_path_c, search_name_c)
+    if not result_pointer:
+        logging.error("Search failed: NULL pointer returned")
+        flash('Search failed: No results or error occurred.', 'danger')
         return []
+    raw_output = result_pointer.decode('utf-8')
+    logging.info(f"C++ search result: {raw_output}")
+    parsed_results = parse_search_results(raw_output)
+    logging.info(f"Parsed results: {parsed_results}")
+    lib.free_result(result_pointer)
+    return parsed_results
 
 # Login required decorator
 def login_required(f):
+    @wraps(f)
     def wrap(*args, **kwargs):
         if 'user_id' not in session:
+            flash('Please log in first.', 'danger')
             return redirect(url_for('login'))
         return f(*args, **kwargs)
-    wrap.__name__ = f.__name__
     return wrap
 
 # Routes
@@ -88,6 +89,8 @@ def index():
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
+    if 'user_id' in session:
+        return redirect(url_for('students'))
     if request.method == 'POST':
         username = request.form['username']
         password = request.form['password']
@@ -100,14 +103,18 @@ def login():
             session['user_id'] = user[0]
             session['role'] = user[3]
             logging.info(f'User {username} logged in')
+            flash('Login successful!', 'success')
             return redirect(url_for('students'))
-        return 'Invalid credentials'
+        flash('Invalid credentials', 'danger')
+        return render_template('login.html')
     return render_template('login.html')
 
 @app.route('/logout')
+@login_required
 def logout():
     session.pop('user_id', None)
     session.pop('role', None)
+    flash('Logged out successfully.', 'success')
     return redirect(url_for('login'))
 
 @app.route('/students', methods=['GET'])
@@ -115,8 +122,8 @@ def logout():
 def students():
     conn = sqlite3.connect('students.db')
     c = conn.cursor()
-    c.execute('SELECT * FROM students')
-    students = c.fetchall()
+    c.execute('SELECT id, name, grade, course FROM students')
+    students = c.fetchall()  # Return as list of tuples
     conn.close()
     return render_template('students.html', students=students)
 
@@ -124,57 +131,82 @@ def students():
 @login_required
 def add_student():
     if session['role'] != 'admin':
-        return 'Unauthorized', 403
+        flash('Unauthorized access.', 'danger')
+        return redirect(url_for('students'))
     if request.method == 'POST':
         name = request.form['name']
-        grade = int(request.form['grade'])
+        grade = request.form['grade']
         course = request.form['course']
-        if not name or grade < 0:
-            logging.error(f'Invalid input: name={name}, grade={grade}, course={course}')
-            return 'Invalid input', 400
-        conn = sqlite3.connect('students.db')
-        c = conn.cursor()
-        c.execute('INSERT INTO students (name, grade, course) VALUES (?, ?, ?)', 
-                  (name, grade, course))
-        conn.commit()
-        conn.close()
-        logging.info(f'Student {name} added with grade={grade}, course={course}')
-        return redirect(url_for('students'))
+        try:
+            grade = int(grade) if grade else None
+            if not name:
+                raise ValueError("Name is required")
+            conn = sqlite3.connect('students.db')
+            c = conn.cursor()
+            c.execute('INSERT INTO students (name, grade, course) VALUES (?, ?, ?)', 
+                      (name, grade, course))
+            conn.commit()
+            conn.close()
+            logging.info(f'Student {name} added with grade={grade}, course={course}')
+            flash('Student added successfully!', 'success')
+            return redirect(url_for('students'))
+        except ValueError as e:
+            flash(f'Invalid input: {str(e)}', 'danger')
+        except Exception as e:
+            flash(f'Error adding student: {str(e)}', 'danger')
     return render_template('add_student.html')
 
 @app.route('/update/<int:id>', methods=['GET', 'POST'])
 @login_required
 def update_student(id):
     if session['role'] != 'admin':
-        return 'Unauthorized', 403
+        flash('Unauthorized access.', 'danger')
+        return redirect(url_for('students'))
     conn = sqlite3.connect('students.db')
     c = conn.cursor()
     if request.method == 'POST':
         name = request.form['name']
-        grade = int(request.form['grade'])
+        grade = request.form['grade']
         course = request.form['course']
-        c.execute('UPDATE students SET name = ?, grade = ?, course = ? WHERE id = ?', 
-                  (name, grade, course, id))
-        conn.commit()
-        conn.close()
-        logging.info(f'Student ID {id} updated')
-        return redirect(url_for('students'))
-    c.execute('SELECT * FROM students WHERE id = ?', (id,))
-    student = c.fetchone()
+        try:
+            grade = int(grade) if grade else None
+            if not name:
+                raise ValueError("Name is required")
+            c.execute('UPDATE students SET name = ?, grade = ?, course = ? WHERE id = ?', 
+                      (name, grade, course, id))
+            conn.commit()
+            flash('Student updated successfully!', 'success')
+            return redirect(url_for('students'))
+        except ValueError as e:
+            flash(f'Invalid input: {str(e)}', 'danger')
+        except Exception as e:
+            flash(f'Error updating student: {str(e)}', 'danger')
+        finally:
+            conn.close()
+    c.execute('SELECT id, name, grade, course FROM students WHERE id = ?', (id,))
+    student = c.fetchone()  # Return as tuple
     conn.close()
-    return render_template('update_student.html', student=student)
+    if student:
+        return render_template('update_student.html', student=student)
+    flash('Student not found.', 'danger')
+    return redirect(url_for('students'))
 
 @app.route('/delete/<int:id>')
 @login_required
 def delete_student(id):
     if session['role'] != 'admin':
-        return 'Unauthorized', 403
-    conn = sqlite3.connect('students.db')
-    c = conn.cursor()
-    c.execute('DELETE FROM students WHERE id = ?', (id,))
-    conn.commit()
-    conn.close()
-    logging.info(f'Student ID {id} deleted')
+        flash('Unauthorized access.', 'danger')
+        return redirect(url_for('students'))
+    try:
+        conn = sqlite3.connect('students.db')
+        c = conn.cursor()
+        c.execute('DELETE FROM students WHERE id = ?', (id,))
+        conn.commit()
+        conn.close()
+        logging.info(f'Student ID {id} deleted')
+        flash('Student deleted successfully!', 'success')
+    except Exception as e:
+        flash(f'Error deleting student: {str(e)}', 'danger')
     return redirect(url_for('students'))
 
 @app.route('/search', methods=['GET', 'POST'])
@@ -193,7 +225,7 @@ def search():
 def report():
     conn = sqlite3.connect('students.db')
     c = conn.cursor()
-    c.execute('SELECT * FROM students')
+    c.execute('SELECT id, name, grade, course FROM students')
     students = c.fetchall()
     conn.close()
     output = io.StringIO()
